@@ -12,8 +12,16 @@ Read the user's Microsoft Teams chats and channel messages using their `teams` C
 
 - Binary: use `teams` if it is on `PATH`, otherwise `~/go/bin/teams`. If neither exists, tell the user; don't build or install it without asking.
 - Auth: use an existing cached sign-in from `teams login` or a Microsoft Graph access token provided through `TEAMS_CLI_ACCESS_TOKEN`. Check with `teams whoami` before reading messages.
-- If authentication is needed, offer `teams login` for interactive sign-in, `teams login --device-code` for headless use, or `TEAMS_CLI_ACCESS_TOKEN` for an existing token. Let the user choose; browser or device-code sign-in may require their interaction.
-- If using an access token, ask the user to set `TEAMS_CLI_ACCESS_TOKEN` themselves in the agent terminal. Never ask for the token in chat, and never echo, log, or write it to files.
+- If authentication is needed, offer `teams login` for interactive sign-in, `teams login --device-code` for headless use, an existing `az login` session, or `TEAMS_CLI_ACCESS_TOKEN` for a user-supplied token. Let the user choose; sign-in may require their interaction.
+- With an existing Azure CLI sign-in, the user can set a Microsoft Graph token for this shell without printing it:
+
+	```sh
+	TEAMS_CLI_ACCESS_TOKEN="$(az account get-access-token --resource-type ms-graph --query accessToken -o tsv)" && export TEAMS_CLI_ACCESS_TOKEN
+	teams whoami
+	```
+
+	This works only if the Azure CLI token has the delegated Graph permissions needed for the requested Teams command. A successful `whoami` does not establish permission to read messages; if Graph returns `forbidden`, use an appropriately consented sign-in. Azure CLI access tokens expire (typically within an hour); repeat the command when needed. Do not save the token in a file or shell startup configuration.
+- If the user supplies a token manually, ask them to set `TEAMS_CLI_ACCESS_TOKEN` themselves in the agent terminal. Never ask for a token in chat, and never echo, log, or write it to files.
 
 ## Commands
 
@@ -51,7 +59,7 @@ In the output, a message's `type` is `message` for a thread root or `reply` for 
 | Exit | Code | Action |
 |---|---|---|
 | 2 | `usage` | Fix the flags |
-| 3 | `not_logged_in` | Sign-in missing or expired, or access token invalid. Offer `teams login`, `teams login --device-code`, or a refreshed `TEAMS_CLI_ACCESS_TOKEN` as appropriate |
+| 3 | `not_logged_in` | Sign-in missing or expired, or access token invalid. Offer `teams login`, `teams login --device-code`, or a refreshed `TEAMS_CLI_ACCESS_TOKEN` (including via Azure CLI) as appropriate |
 | 4 | `not_found` / `ambiguous` | Check names, or add `--team` |
 | 5 | `forbidden` | The token lacks a scope (e.g. `ChannelMessage.Read.All`, `Chat.Read`) or the user isn't in the channel |
 | 5 | `throttled` / `graph_error` | Retry later, with a narrower `--since` |
