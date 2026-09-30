@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -132,6 +133,7 @@ func TestErrors(t *testing.T) {
 		{[]string{"messages", "-c", "general", "-t", "data", "--since", "1d", "--until", "2d"}, ExitUsage, "usage", "--until must be after"},
 		{[]string{"teams", "--format", "xml"}, ExitUsage, "usage", "invalid --format"},
 		{[]string{"bogus"}, ExitUsage, "usage", "unknown command"},
+		{[]string{"login", "--timeout", "0s"}, ExitUsage, "usage", "--timeout must be positive"},
 		{[]string{"thread", "--channel", "platform-engineering", "--id", "missing"}, ExitNotFound, "not_found", "message not found"},
 	}
 	for _, c := range cases {
@@ -161,3 +163,10 @@ func TestUnauthorizedMapsToAuthExitCode(t *testing.T) {
 type badToken struct{}
 
 func (badToken) Token(context.Context) (string, error) { return "expired", nil }
+
+func TestClassifyTimeout(t *testing.T) {
+	info, code := classify(fmt.Errorf("sign-in failed: %w", context.DeadlineExceeded))
+	if info.Code != "timeout" || code != ExitError {
+		t.Fatalf("got %s/%d", info.Code, code)
+	}
+}

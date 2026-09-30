@@ -48,6 +48,9 @@ func classify(err error) (ErrorInfo, int) {
 	case errors.Is(err, context.Canceled):
 		info.Code = "interrupted"
 		return info, ExitInterrupted
+	case errors.Is(err, context.DeadlineExceeded):
+		info.Code = "timeout"
+		return info, ExitError
 	case errors.Is(err, auth.ErrNotLoggedIn):
 		info.Code = "not_logged_in"
 		return info, ExitAuth

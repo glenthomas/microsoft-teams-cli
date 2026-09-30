@@ -146,7 +146,7 @@ Errors are written to stderr:
 | Exit code | `error.code` | Meaning |
 | --- | --- | --- |
 | 0 | | Success |
-| 1 | `error` | Unexpected error |
+| 1 | `error`, `timeout` | Unexpected error, or `teams login` exceeded `--timeout` |
 | 2 | `usage` | Invalid flags or arguments |
 | 3 | `not_logged_in` | No cached sign-in or it expired — run `teams login` |
 | 4 | `not_found`, `ambiguous` | Team/channel/message not found, or name matched several |

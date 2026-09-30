@@ -30,6 +30,9 @@ Tokens are cached in the CLI config directory (owner-only permissions) and
 refreshed automatically by later commands.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if timeout <= 0 {
+				return newUsageError(fmt.Errorf("--timeout must be positive"))
+			}
 			au, dir, err := a.authenticator()
 			if err != nil {
 				return err
