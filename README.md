@@ -1,4 +1,4 @@
-# microsoft-teams-cli
+# Microsoft Teams CLI
 
 A command line interface for Microsoft Teams.
 
