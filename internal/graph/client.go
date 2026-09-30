@@ -2,6 +2,7 @@
 package graph
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,7 +20,7 @@ type TokenSource interface {
 	Token(ctx context.Context) (string, error)
 }
 
-// Client performs authenticated GET requests against Microsoft Graph.
+// Client performs authenticated requests against Microsoft Graph.
 type Client struct {
 	BaseURL    string
 	HTTP       *http.Client
@@ -78,19 +79,41 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values, out any
 	}
 }
 
+// Post sends a JSON request to Microsoft Graph and decodes its JSON response.
+// It does not retry because repeating a POST can create duplicate resources.
+func (c *Client) Post(ctx context.Context, path string, body, out any) error {
+	u, err := c.resolve(path, nil)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("encoding Microsoft Graph request: %w", err)
+	}
+	_, err = c.request(ctx, http.MethodPost, u, payload, out)
+	return err
+}
+
 // do performs a single request. It returns a non-negative retry delay when the
 // request may be retried.
 func (c *Client) do(ctx context.Context, u string, out any) (time.Duration, error) {
+	return c.request(ctx, http.MethodGet, u, nil, out)
+}
+
+func (c *Client) request(ctx context.Context, method, u string, body []byte, out any) (time.Duration, error) {
 	token, err := c.Tokens.Token(ctx)
 	if err != nil {
 		return -1, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(ctx, method, u, bytes.NewReader(body))
 	if err != nil {
 		return -1, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -99,7 +122,7 @@ func (c *Client) do(ctx context.Context, u string, out any) (time.Duration, erro
 		return time.Second, fmt.Errorf("request to Microsoft Graph failed: %w", err)
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	if err != nil {
 		return time.Second, fmt.Errorf("reading Microsoft Graph response: %w", err)
 	}
@@ -107,7 +130,7 @@ func (c *Client) do(ctx context.Context, u string, out any) (time.Duration, erro
 		if out == nil {
 			return -1, nil
 		}
-		if err := json.Unmarshal(body, out); err != nil {
+		if err := json.Unmarshal(responseBody, out); err != nil {
 			return -1, fmt.Errorf("decoding Microsoft Graph response: %w", err)
 		}
 		return -1, nil
@@ -120,7 +143,7 @@ func (c *Client) do(ctx context.Context, u string, out any) (time.Duration, erro
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if json.Unmarshal(body, &payload) == nil && payload.Error.Code != "" {
+	if json.Unmarshal(responseBody, &payload) == nil && payload.Error.Code != "" {
 		apiErr.Code = payload.Error.Code
 		apiErr.Message = payload.Error.Message
 	}

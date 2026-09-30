@@ -70,6 +70,105 @@ func (a *App) channelsCmd() *cobra.Command {
 	return cmd
 }
 
+func (a *App) chatsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "chats",
+		Short: "List your one-to-one and group chats",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			svc, err := a.service(cmd.Context())
+			if err != nil {
+				return err
+			}
+			chats, err := svc.ListPrivateChats(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if chats == nil {
+				chats = []graph.Chat{}
+			}
+			return a.emit(map[string]any{"count": len(chats), "chats": chats}, func(w io.Writer) {
+				for _, chat := range chats {
+					fmt.Fprintf(w, "%s\t%s\t%s\n", chat.ChatType, chat.Topic, chat.ID)
+				}
+			})
+		},
+	}
+}
+
+func (a *App) chatMessagesCmd() *cobra.Command {
+	var chatID string
+	cmd := &cobra.Command{
+		Use:   "chat-messages",
+		Short: "List messages in a one-to-one or group chat (newest first)",
+		Example: `  teams chat-messages --chat 19:abc@thread.v2
+  teams chat-messages --chat 19:abc@thread.v2 --format text`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if strings.TrimSpace(chatID) == "" {
+				return newUsageError(fmt.Errorf("--chat is required"))
+			}
+			svc, err := a.service(cmd.Context())
+			if err != nil {
+				return err
+			}
+			messages, err := svc.ChatMessages(cmd.Context(), chatID)
+			if err != nil {
+				return err
+			}
+			if messages == nil {
+				messages = []teams.ChatMessage{}
+			}
+			return a.emit(map[string]any{"chatId": chatID, "count": len(messages), "messages": messages}, func(w io.Writer) {
+				for i, message := range messages {
+					if i > 0 {
+						fmt.Fprintln(w)
+					}
+					fmt.Fprintf(w, "[%s] %s\n%s\n", message.CreatedDateTime.Local().Format("2006-01-02 15:04"), message.Author, message.Text)
+					if message.WebURL != "" {
+						fmt.Fprintln(w, message.WebURL)
+					}
+				}
+			})
+		},
+	}
+	cmd.Flags().StringVarP(&chatID, "chat", "c", "", "chat ID (from teams chats; required)")
+	return cmd
+}
+
+func (a *App) chatPostCmd() *cobra.Command {
+	var chatID, message string
+	cmd := &cobra.Command{
+		Use:   "chat-post",
+		Short: "Send a message to a one-to-one or group chat",
+		Example: `  teams chat-post --chat 19:abc@thread.v2 --message "I will take a look"
+  teams chat-post -c 19:abc@thread.v2 -m "Thanks"`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if strings.TrimSpace(chatID) == "" || strings.TrimSpace(message) == "" {
+				return newUsageError(fmt.Errorf("--chat and non-empty --message are required"))
+			}
+			svc, err := a.service(cmd.Context())
+			if err != nil {
+				return err
+			}
+			created, err := svc.PostChatMessage(cmd.Context(), chatID, message)
+			if err != nil {
+				return err
+			}
+			return a.emit(map[string]any{"status": "sent", "chatId": chatID, "message": created}, func(w io.Writer) {
+				fmt.Fprintf(w, "Sent message %s to chat %s\n", created.ID, chatID)
+				if created.WebURL != "" {
+					fmt.Fprintln(w, created.WebURL)
+				}
+			})
+		},
+	}
+	cmd.Flags().StringVarP(&chatID, "chat", "c", "", "chat ID (from teams chats; required)")
+	cmd.Flags().StringVarP(&message, "message", "m", "", "message text to send (required)")
+	return cmd
+}
+
 // messageFlags are shared by the messages and search commands.
 type messageFlags struct {
 	team, channel, since, until, query string
@@ -244,6 +343,46 @@ func (a *App) threadCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&channel, "channel", "c", "", "channel name or ID (required)")
 	cmd.Flags().StringVarP(&team, "team", "t", "", "team name or ID (optional)")
 	cmd.Flags().StringVar(&id, "id", "", "message ID of the thread's root message (the threadId field from search/messages output)")
+	return cmd
+}
+
+func (a *App) postCmd() *cobra.Command {
+	var team, channel, message, replyTo string
+	cmd := &cobra.Command{
+		Use:   "post",
+		Short: "Post a message or reply in a channel",
+		Example: `  teams post --channel platform-engineering --message "Deployment is complete"
+  teams post --channel platform-engineering --reply-to 1717171717171 --message "Thanks for the update"`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if channel == "" || strings.TrimSpace(message) == "" {
+				return newUsageError(fmt.Errorf("--channel and non-empty --message are required"))
+			}
+			svc, err := a.service(cmd.Context())
+			if err != nil {
+				return err
+			}
+			chans, err := svc.ResolveChannels(cmd.Context(), team, channel)
+			if err != nil {
+				return err
+			}
+			created, err := svc.PostMessage(cmd.Context(), chans[0], message, replyTo)
+			if err != nil {
+				return err
+			}
+			out := map[string]any{"status": "posted", "channel": chans[0], "message": created}
+			return a.emit(out, func(w io.Writer) {
+				fmt.Fprintf(w, "Posted message %s in %s/%s\n", created.ID, chans[0].TeamName, chans[0].ChannelName)
+				if created.WebURL != "" {
+					fmt.Fprintln(w, created.WebURL)
+				}
+			})
+		},
+	}
+	cmd.Flags().StringVarP(&channel, "channel", "c", "", "channel name or ID (required)")
+	cmd.Flags().StringVarP(&team, "team", "t", "", "team name or ID (optional; disambiguates channel names)")
+	cmd.Flags().StringVarP(&message, "message", "m", "", "message text to post (required)")
+	cmd.Flags().StringVar(&replyTo, "reply-to", "", "root message ID to reply to (default: post a new thread)")
 	return cmd
 }
 

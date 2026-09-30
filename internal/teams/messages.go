@@ -212,3 +212,23 @@ func (s *Service) Thread(ctx context.Context, ch ChannelRef, messageID string) (
 	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedDateTime.Before(out[j].CreatedDateTime) })
 	return out, nil
 }
+
+// PostMessage creates a channel message, or a reply when replyTo is non-empty.
+func (s *Service) PostMessage(ctx context.Context, ch ChannelRef, content, replyTo string) (Message, error) {
+	var (
+		created  graph.ChatMessage
+		err      error
+		threadID string
+	)
+	if replyTo == "" {
+		created, err = s.Graph.PostChannelMessage(ctx, ch.TeamID, ch.ChannelID, content)
+		threadID = created.ID
+	} else {
+		created, err = s.Graph.ReplyToChannelMessage(ctx, ch.TeamID, ch.ChannelID, replyTo, content)
+		threadID = replyTo
+	}
+	if err != nil {
+		return Message{}, err
+	}
+	return NewMessage(ch, created, threadID), nil
+}

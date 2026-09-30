@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -57,6 +58,34 @@ func TestGetReturnsAPIError(t *testing.T) {
 	}
 	if !IsStatus(err, 403) {
 		t.Fatal("IsStatus should report 403")
+	}
+}
+
+func TestPostSendsJSONAndDecodesResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/teams/team-1/channels/channel-1/messages" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer abc" || r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("missing auth/content headers: %v", r.Header)
+		}
+		var request struct {
+			Body ItemBody `json:"body"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		if request.Body.ContentType != "text" || request.Body.Content != "hello" {
+			t.Errorf("unexpected request body: %+v", request.Body)
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"new-1","body":{"contentType":"text","content":"hello"}}`))
+	}))
+	defer srv.Close()
+
+	message, err := NewClient(srv.URL, tok("abc")).PostChannelMessage(context.Background(), "team-1", "channel-1", "hello")
+	if err != nil || message.ID != "new-1" || message.Body.Content != "hello" {
+		t.Fatalf("message=%+v err=%v", message, err)
 	}
 }
 

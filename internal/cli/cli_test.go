@@ -95,6 +95,123 @@ func TestThreadCommand(t *testing.T) {
 	}
 }
 
+func TestPostCommandAndReply(t *testing.T) {
+	srv := seeded(t)
+	code, out, errOut := run(t, srv, "post", "--channel", "platform-engineering", "--message", "Deploy complete")
+	if code != ExitOK {
+		t.Fatalf("post exit %d: %s", code, errOut)
+	}
+	var posted struct {
+		Status  string `json:"status"`
+		Message struct {
+			ID       string `json:"id"`
+			Type     string `json:"type"`
+			ThreadID string `json:"threadId"`
+			Text     string `json:"text"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(out), &posted); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	}
+	if posted.Status != "posted" || posted.Message.ID == "" || posted.Message.Type != "message" || posted.Message.ThreadID != posted.Message.ID || posted.Message.Text != "Deploy complete" {
+		t.Fatalf("unexpected post response: %s", out)
+	}
+
+	code, out, errOut = run(t, srv, "post", "--channel", "platform-engineering", "--reply-to", "m1", "--message", "Acknowledged")
+	if code != ExitOK || !strings.Contains(out, `"type": "reply"`) || !strings.Contains(out, `"threadId": "m1"`) {
+		t.Fatalf("reply exit %d: %s %s", code, out, errOut)
+	}
+	code, out, errOut = run(t, srv, "thread", "--channel", "platform-engineering", "--id", "m1")
+	if code != ExitOK || !strings.Contains(out, "Acknowledged") {
+		t.Fatalf("thread after reply exit %d: %s %s", code, out, errOut)
+	}
+}
+
+func TestPostRequiresChannelAndMessage(t *testing.T) {
+	srv := seeded(t)
+	for _, args := range [][]string{
+		{"post", "--message", "hello"},
+		{"post", "--channel", "platform-engineering", "--message", "  "},
+	} {
+		code, out, errOut := run(t, srv, args...)
+		if code != ExitUsage || out != "" || !strings.Contains(errOut, "--channel and non-empty --message are required") {
+			t.Errorf("%v: exit %d stdout=%q stderr=%s", args, code, out, errOut)
+		}
+	}
+}
+
+func TestPrivateChatCommands(t *testing.T) {
+	srv := seeded(t)
+	srv.Chats = []graph.Chat{
+		{ID: "one-to-one", ChatType: "oneOnOne"},
+		{ID: "group-chat", ChatType: "group", Topic: "Release planning"},
+		{ID: "meeting-chat", ChatType: "meeting"},
+	}
+	srv.PageSize = 1
+	srv.ChatMessages["one-to-one"] = []graph.ChatMessage{
+		{ID: "chat-m2", ChatID: "one-to-one", MessageType: "message", CreatedDateTime: now.Add(-time.Hour), From: &graph.IdentitySet{User: &graph.Identity{ID: "u2", DisplayName: "Alice"}}, Body: graph.ItemBody{ContentType: "html", Content: "<p>Second</p>"}},
+		{ID: "chat-m1", ChatID: "one-to-one", MessageType: "message", CreatedDateTime: now.Add(-2 * time.Hour), Body: graph.ItemBody{ContentType: "text", Content: "First"}},
+	}
+
+	code, out, errOut := run(t, srv, "chats")
+	if code != ExitOK || strings.Contains(errOut, "error") {
+		t.Fatalf("chats exit %d: %s", code, errOut)
+	}
+	var chatResult struct {
+		Count int          `json:"count"`
+		Chats []graph.Chat `json:"chats"`
+	}
+	if err := json.Unmarshal([]byte(out), &chatResult); err != nil {
+		t.Fatalf("invalid chat JSON: %v\n%s", err, out)
+	}
+	if chatResult.Count != 2 || len(chatResult.Chats) != 2 || chatResult.Chats[1].ID != "group-chat" {
+		t.Fatalf("unexpected chat list: %s", out)
+	}
+
+	code, out, errOut = run(t, srv, "chat-messages", "--chat", "one-to-one")
+	if code != ExitOK {
+		t.Fatalf("chat-messages exit %d: %s", code, errOut)
+	}
+	var messageResult struct {
+		Count    int `json:"count"`
+		Messages []struct {
+			ID, Author, Text string
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal([]byte(out), &messageResult); err != nil {
+		t.Fatalf("invalid chat message JSON: %v\n%s", err, out)
+	}
+	if messageResult.Count != 2 || messageResult.Messages[0].ID != "chat-m2" || messageResult.Messages[0].Author != "Alice" || messageResult.Messages[0].Text != "Second" {
+		t.Fatalf("unexpected chat messages: %s", out)
+	}
+	requestsBeforePost := len(srv.Requests())
+
+	code, out, errOut = run(t, srv, "chat-post", "--chat", "one-to-one", "--message", "Replying in chat")
+	if code != ExitOK {
+		t.Fatalf("chat-post exit %d: %s", code, errOut)
+	}
+	if !strings.Contains(out, `"status": "sent"`) || !strings.Contains(out, `"text": "Replying in chat"`) {
+		t.Fatalf("unexpected chat-post response: %s", out)
+	}
+	requests := srv.Requests()
+	if got := requests[len(requests)-1]; !strings.Contains(got, "/chats/one-to-one/messages") || len(requests) != requestsBeforePost+1 {
+		t.Fatalf("unexpected chat send requests: %v", requests)
+	}
+}
+
+func TestChatCommandsRequireArguments(t *testing.T) {
+	srv := seeded(t)
+	for _, args := range [][]string{
+		{"chat-messages"},
+		{"chat-post", "--chat", "some-chat", "--message", "  "},
+	} {
+		code, out, errOut := run(t, srv, args...)
+		if code != ExitUsage || out != "" || errorCode(t, errOut) != "usage" {
+			t.Errorf("%v: exit %d stdout=%q stderr=%s", args, code, out, errOut)
+		}
+	}
+}
+
 func TestListCommands(t *testing.T) {
 	srv := seeded(t)
 	if code, out, _ := run(t, srv, "teams"); code != ExitOK || !strings.Contains(out, `"count": 2`) {

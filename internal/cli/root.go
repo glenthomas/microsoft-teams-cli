@@ -82,7 +82,8 @@ Authenticate once with "teams login", which opens a browser window.`,
 		Example: `  teams login
   teams search --channel platform-engineering --since 30d --query "private endpoints"
   teams messages --team "Platform" --channel general --since 7d
-  teams thread --channel platform-engineering --id 1717171717171`,
+	teams thread --channel platform-engineering --id 1717171717171
+	teams post --channel platform-engineering --message "Deployment is complete"`,
 		Version:       Version,
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -105,9 +106,13 @@ Authenticate once with "teams login", which opens a browser window.`,
 		a.whoamiCmd(),
 		a.teamsCmd(),
 		a.channelsCmd(),
+		a.chatsCmd(),
+		a.chatMessagesCmd(),
+		a.chatPostCmd(),
 		a.messagesCmd(),
 		a.searchCmd(),
 		a.threadCmd(),
+		a.postCmd(),
 	)
 	return root
 }

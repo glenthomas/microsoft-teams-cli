@@ -48,8 +48,14 @@ refreshed silently by later commands. `teams logout` removes them.
 
 The CLI requests these delegated Microsoft Graph permissions:
 `User.Read`, `Team.ReadBasic.All`, `Channel.ReadBasic.All`,
-`ChannelMessage.Read.All` (plus `offline_access`).
+`ChannelMessage.Read.All`, `ChannelMessage.Send`, `Chat.ReadBasic`, `Chat.Read`,
+and `ChatMessage.Send` (plus `offline_access`).
 `ChannelMessage.Read.All` requires **admin consent** in most tenants.
+`ChannelMessage.Send` is used by `teams post`; admin consent is not generally
+required, though tenant policies can restrict user consent.
+The chat permissions are used by `teams chats`, `teams chat-messages`, and
+`teams chat-post`. Their delegated Graph permissions do not generally require
+admin consent, though tenant consent policies can still require approval.
 
 By default the public *Microsoft Graph Command Line Tools* application
 (`14d82eec-204b-4c2f-b7e8-296a70dab67e`) and the `organizations` authority are
@@ -76,9 +82,27 @@ If you already have a Graph access token (e.g. in CI), set
 | `teams whoami` | Show the signed-in user |
 | `teams teams` | List teams you are a member of |
 | `teams channels [--team T]` | List channels in a team, or in all your teams |
+| `teams chats` | List your one-to-one and group chats (excludes meeting chats) |
 | `teams messages --channel C [--team T] [--since 7d]` | List recent messages and replies, newest first |
 | `teams search --channel C [--team T] --query Q [--since 30d]` | Search messages and replies, newest first |
 | `teams thread --channel C [--team T] --id ID` | Show a thread (root + replies), oldest first |
+| `teams post --channel C [--team T] --message TEXT [--reply-to ID]` | Post a channel message or reply to a thread |
+| `teams chat-messages --chat ID` | List messages in a one-to-one or group chat, newest first |
+| `teams chat-post --chat ID --message TEXT` | Send a message to a one-to-one or group chat |
+
+`--reply-to` takes the root message ID (the `threadId` field from `messages`,
+`search`, or `thread` output). For example:
+
+```sh
+teams post --channel platform-engineering --message "Deployment is complete"
+teams post --channel platform-engineering --reply-to 1717171717171 --message "Acknowledged"
+teams chats
+teams chat-messages --chat '19:abc@thread.v2'
+teams chat-post --chat '19:abc@thread.v2' --message "I will take a look"
+```
+
+Use the chat ID from `teams chats` with `chat-messages` and `chat-post`. Chat
+history is limited to chats the signed-in user participates in.
 
 Common flags for `messages` and `search`:
 

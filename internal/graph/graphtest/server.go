@@ -5,12 +5,15 @@ package graphtest
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/glenthomas/microsoft-teams-cli/internal/graph"
 )
@@ -21,10 +24,12 @@ const Token = "test-token"
 // Server is a fake Graph server.
 type Server struct {
 	*httptest.Server
-	Me       graph.User
-	Teams    []graph.Team
-	Channels map[string][]graph.Channel     // by team ID
-	Messages map[string][]graph.ChatMessage // root messages (with replies) by channel ID
+	Me           graph.User
+	Teams        []graph.Team
+	Chats        []graph.Chat
+	Channels     map[string][]graph.Channel     // by team ID
+	Messages     map[string][]graph.ChatMessage // root messages (with replies) by channel ID
+	ChatMessages map[string][]graph.ChatMessage // messages by chat ID
 	// Forbidden channel IDs return 403 for message requests.
 	Forbidden map[string]bool
 	// PageSize overrides the page size for message listings (default: $top).
@@ -32,14 +37,16 @@ type Server struct {
 
 	mu       sync.Mutex
 	requests []string
+	nextID   int
 }
 
 // New starts a fake Graph server that is closed when the test ends.
 func New(t *testing.T) *Server {
 	s := &Server{
-		Channels:  map[string][]graph.Channel{},
-		Messages:  map[string][]graph.ChatMessage{},
-		Forbidden: map[string]bool{},
+		Channels:     map[string][]graph.Channel{},
+		Messages:     map[string][]graph.ChatMessage{},
+		ChatMessages: map[string][]graph.ChatMessage{},
+		Forbidden:    map[string]bool{},
 	}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.handle))
 	t.Cleanup(s.Close)
@@ -77,6 +84,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, s.Me)
 	case len(parts) == 2 && parts[0] == "me" && parts[1] == "joinedTeams":
 		writeJSON(w, map[string]any{"value": s.Teams})
+	case len(parts) == 2 && parts[0] == "me" && parts[1] == "chats":
+		writeJSON(w, map[string]any{"value": s.Chats})
+	case len(parts) >= 3 && parts[0] == "chats" && parts[2] == "messages":
+		s.handleChatMessages(w, r, parts[1], parts[3:])
 	case len(parts) == 2 && parts[0] == "teams":
 		for _, t := range s.Teams {
 			if t.ID == parts[1] {
@@ -99,6 +110,54 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleChatMessages(w http.ResponseWriter, r *http.Request, chatID string, rest []string) {
+	msgs, ok := s.ChatMessages[chatID]
+	if !ok {
+		writeErr(w, http.StatusNotFound, "NotFound", "chat not found")
+		return
+	}
+	if len(rest) != 0 {
+		writeErr(w, http.StatusNotFound, "UnknownPath", r.URL.Path)
+		return
+	}
+	if r.Method == http.MethodPost {
+		var request struct {
+			Body graph.ItemBody `json:"body"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.Body.Content == "" {
+			writeErr(w, http.StatusBadRequest, "InvalidRequest", "message body is required")
+			return
+		}
+		s.mu.Lock()
+		s.nextID++
+		id := fmt.Sprintf("chat-posted-%d", s.nextID)
+		s.mu.Unlock()
+		created := graph.ChatMessage{
+			ID: id, ChatID: chatID, MessageType: "message", CreatedDateTime: time.Now().UTC(),
+			Body: request.Body,
+			From: &graph.IdentitySet{User: &graph.Identity{ID: s.Me.ID, DisplayName: s.Me.DisplayName}},
+		}
+		s.ChatMessages[chatID] = append([]graph.ChatMessage{created}, msgs...)
+		writeJSON(w, created)
+		return
+	}
+	size := s.PageSize
+	if size == 0 {
+		size, _ = strconv.Atoi(r.URL.Query().Get("$top"))
+	}
+	if size <= 0 {
+		size = 20
+	}
+	skip, _ := strconv.Atoi(r.URL.Query().Get("$skiptoken"))
+	end := min(skip+size, len(msgs))
+	page := append([]graph.ChatMessage(nil), msgs[skip:end]...)
+	resp := map[string]any{"value": page}
+	if end < len(msgs) {
+		resp["@odata.nextLink"] = s.URL + r.URL.EscapedPath() + "?$top=" + strconv.Itoa(size) + "&$skiptoken=" + strconv.Itoa(end)
+	}
+	writeJSON(w, resp)
+}
+
 func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, channelID string, rest []string) {
 	if s.Forbidden[channelID] {
 		writeErr(w, http.StatusForbidden, "Forbidden", "Missing role permissions on the request.")
@@ -118,6 +177,46 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, channelI
 		return graph.ChatMessage{}, false
 	}
 	q := r.URL.Query()
+	if r.Method == http.MethodPost {
+		var request struct {
+			Body graph.ItemBody `json:"body"`
+		}
+		payload, err := io.ReadAll(r.Body)
+		if err != nil || json.Unmarshal(payload, &request) != nil || request.Body.Content == "" {
+			writeErr(w, http.StatusBadRequest, "InvalidRequest", "message body is required")
+			return
+		}
+		s.mu.Lock()
+		s.nextID++
+		id := fmt.Sprintf("posted-%d", s.nextID)
+		s.mu.Unlock()
+		created := graph.ChatMessage{
+			ID: id, MessageType: "message", CreatedDateTime: time.Now().UTC(),
+			Body: request.Body,
+			From: &graph.IdentitySet{User: &graph.Identity{ID: s.Me.ID, DisplayName: s.Me.DisplayName}},
+		}
+		if len(rest) == 0 {
+			s.Messages[channelID] = append([]graph.ChatMessage{created}, msgs...)
+		} else if len(rest) == 2 && rest[1] == "replies" {
+			for i := range msgs {
+				if msgs[i].ID == rest[0] {
+					created.ReplyToID = rest[0]
+					msgs[i].Replies = append(msgs[i].Replies, created)
+					s.Messages[channelID] = msgs
+					writeJSON(w, created)
+					return
+				}
+			}
+			writeErr(w, http.StatusNotFound, "NotFound", "message not found")
+			return
+		} else {
+			writeErr(w, http.StatusNotFound, "UnknownPath", r.URL.Path)
+			return
+		}
+		created.WebURL = "https://teams.microsoft.com/l/message/" + created.ID
+		writeJSON(w, created)
+		return
+	}
 	switch len(rest) {
 	case 0:
 		size := s.PageSize

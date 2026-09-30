@@ -22,6 +22,10 @@ var Scopes = []string{
 	"https://graph.microsoft.com/Team.ReadBasic.All",
 	"https://graph.microsoft.com/Channel.ReadBasic.All",
 	"https://graph.microsoft.com/ChannelMessage.Read.All",
+	"https://graph.microsoft.com/ChannelMessage.Send",
+	"https://graph.microsoft.com/Chat.ReadBasic",
+	"https://graph.microsoft.com/Chat.Read",
+	"https://graph.microsoft.com/ChatMessage.Send",
 }
 
 // ErrNotLoggedIn indicates there is no usable cached sign-in.

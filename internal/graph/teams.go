@@ -23,6 +23,14 @@ type Channel struct {
 	WebURL         string `json:"webUrl"`
 }
 
+// Chat is a one-to-one, group, or meeting chat.
+type Chat struct {
+	ID                  string     `json:"id"`
+	ChatType            string     `json:"chatType"`
+	Topic               string     `json:"topic"`
+	LastUpdatedDateTime *time.Time `json:"lastUpdatedDateTime"`
+}
+
 // Identity is a user, application or device identity.
 type Identity struct {
 	ID          string `json:"id"`
@@ -50,9 +58,10 @@ type Attachment struct {
 	Name        string `json:"name"`
 }
 
-// ChatMessage is a channel message or reply.
+// ChatMessage is a message in a chat or channel.
 type ChatMessage struct {
 	ID                   string        `json:"id"`
+	ChatID               string        `json:"chatId"`
 	ReplyToID            string        `json:"replyToId"`
 	MessageType          string        `json:"messageType"`
 	CreatedDateTime      time.Time     `json:"createdDateTime"`
@@ -114,6 +123,31 @@ func (c *Client) Channels(ctx context.Context, teamID string) ([]Channel, error)
 	return All[Channel](ctx, c, "/teams/"+url.PathEscape(teamID)+"/channels", nil)
 }
 
+// PrivateChats lists the signed-in user's one-to-one and group chats.
+func (c *Client) PrivateChats(ctx context.Context) ([]Chat, error) {
+	chats, err := All[Chat](ctx, c, "/me/chats", url.Values{"$select": {"id,chatType,topic,lastUpdatedDateTime"}})
+	if err != nil {
+		return nil, err
+	}
+	private := make([]Chat, 0, len(chats))
+	for _, chat := range chats {
+		if chat.ChatType == "oneOnOne" || chat.ChatType == "group" {
+			private = append(private, chat)
+		}
+	}
+	return private, nil
+}
+
+// ChatMessages returns all messages in a chat, newest activity first.
+func (c *Client) ChatMessages(ctx context.Context, chatID string) ([]ChatMessage, error) {
+	return All[ChatMessage](ctx, c, chatMessagesPath(chatID), url.Values{"$top": {"50"}})
+}
+
+// PostChatMessage creates a message in a one-to-one or group chat.
+func (c *Client) PostChatMessage(ctx context.Context, chatID, content string) (ChatMessage, error) {
+	return c.postMessage(ctx, chatMessagesPath(chatID), content)
+}
+
 // ChannelMessagePages iterates over root messages in a channel (newest
 // threads first), with replies expanded, calling fn for each page.
 func (c *Client) ChannelMessagePages(ctx context.Context, teamID, channelID string, pageSize int, fn func([]ChatMessage) bool) error {
@@ -140,6 +174,29 @@ func (c *Client) Replies(ctx context.Context, teamID, channelID, messageID strin
 		url.Values{"$top": {"50"}})
 }
 
+// PostChannelMessage creates a root message in a channel.
+func (c *Client) PostChannelMessage(ctx context.Context, teamID, channelID, content string) (ChatMessage, error) {
+	return c.postMessage(ctx, channelMessagesPath(teamID, channelID), content)
+}
+
+// ReplyToChannelMessage creates a reply to a root channel message.
+func (c *Client) ReplyToChannelMessage(ctx context.Context, teamID, channelID, messageID, content string) (ChatMessage, error) {
+	path := channelMessagesPath(teamID, channelID) + "/" + url.PathEscape(messageID) + "/replies"
+	return c.postMessage(ctx, path, content)
+}
+
+func (c *Client) postMessage(ctx context.Context, path, content string) (ChatMessage, error) {
+	var message ChatMessage
+	err := c.Post(ctx, path, struct {
+		Body ItemBody `json:"body"`
+	}{Body: ItemBody{ContentType: "text", Content: content}}, &message)
+	return message, err
+}
+
 func channelMessagesPath(teamID, channelID string) string {
 	return "/teams/" + url.PathEscape(teamID) + "/channels/" + url.PathEscape(channelID) + "/messages"
+}
+
+func chatMessagesPath(chatID string) string {
+	return "/chats/" + url.PathEscape(chatID) + "/messages"
 }
