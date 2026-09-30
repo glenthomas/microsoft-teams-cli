@@ -13,15 +13,16 @@ Read the user's Microsoft Teams chats and channel messages using their `teams` C
 - Binary: use `teams` if it is on `PATH`, otherwise `~/go/bin/teams`. If neither exists, tell the user; don't build or install it without asking.
 - Auth: use an existing cached sign-in from `teams login` or a Microsoft Graph access token provided through `TEAMS_CLI_ACCESS_TOKEN`. Check with `teams whoami` before reading messages.
 - If authentication is needed, offer `teams login` for interactive sign-in, `teams login --device-code` for headless use, an existing `az login` session, or `TEAMS_CLI_ACCESS_TOKEN` for a user-supplied token. Let the user choose; sign-in may require their interaction.
-- With an existing Azure CLI sign-in, the user can set a Microsoft Graph token for this shell without printing it:
-
-	```sh
-	TEAMS_CLI_ACCESS_TOKEN="$(az account get-access-token --resource-type ms-graph --query accessToken -o tsv)" && export TEAMS_CLI_ACCESS_TOKEN
-	teams whoami
-	```
-
-	This works only if the Azure CLI token has the delegated Graph permissions needed for the requested Teams command. A successful `whoami` does not establish permission to read messages; if Graph returns `forbidden`, use an appropriately consented sign-in. Azure CLI access tokens expire (typically within an hour); repeat the command when needed. Do not save the token in a file or shell startup configuration.
 - If the user supplies a token manually, ask them to set `TEAMS_CLI_ACCESS_TOKEN` themselves in the agent terminal. Never ask for a token in chat, and never echo, log, or write it to files.
+
+With an existing Azure CLI sign-in, the user can set a Microsoft Graph token for this shell without printing it:
+
+```sh
+TEAMS_CLI_ACCESS_TOKEN="$(az account get-access-token --resource-type ms-graph --query accessToken -o tsv)" && export TEAMS_CLI_ACCESS_TOKEN
+teams whoami
+```
+
+This works only if the Azure CLI token has the delegated Graph permissions needed for the requested Teams command. A successful `whoami` does not establish permission to read messages; if Graph returns `forbidden`, use an appropriately consented sign-in. Azure CLI access tokens expire (typically within an hour); repeat the command when needed. Do not save the token in a file or shell startup configuration.
 
 ## Commands
 
